@@ -19,12 +19,6 @@ python3 src/build_coco_dataset.py
 ```
 The script scans `巡检报告/` directories, detects red circle annotations via HSV color detection, and generates `dataset/annotations.json` and `dataset/defect_severity.json`.
 
-### Clean/normalization dataset categories
-```bash
-python3 src/cleanup_dataset.py
-```
-Normalizes category names, merges fragmented categories, fixes parsing errors. Run after building a new dataset.
-
 ### Convert COCO to YOLO format
 ```bash
 python3 src/coco_to_yolo.py
@@ -41,8 +35,7 @@ Options: `--dataset` (default `dataset/annotations.json`), `--output` (default `
 
 ```
 src/
-├── build_coco_dataset.py   # Dataset builder - scans 巡检报告, detects red circles, outputs COCO format
-├── cleanup_dataset.py      # Category normalizer - merges fragments, fixes parsing errors
+├── build_coco_dataset.py   # Dataset builder - scans 巡检报告, detects red circles, outputs clean COCO format
 ├── coco_to_yolo.py         # COCO → YOLO format converter with train/val split
 └── visualize_dataset.py   # Annotation visualizer - draws bounding boxes on images
 
@@ -95,8 +88,7 @@ with open('dataset/annotations.json', 'r', encoding='utf-8') as f:
 - Images are renamed to `DND_xxxxxxxx.jpg` format; original filename preserved in `original_name` field
 - Some annotated images may lack matching originals or detectable red circles
 - Chinese characters must be preserved in all paths and filenames
-- `build_coco_dataset.py` includes filename parsing that strips parenthetical details and filters malformed categories
-- Run `cleanup_dataset.py` after building to ensure category consistency
+- `build_coco_dataset.py` includes filename parsing that strips parenthetical details, normalizes defect names, and filters malformed categories
 - YOLO dataset uses symlinks - does not duplicate images
 
 ## YOLO Training
@@ -126,8 +118,7 @@ rsync -avz --exclude='dataset/images' --exclude='venv' --exclude='.git' --exclud
 ```
 VibeDND/
 ├── src/
-│   ├── build_coco_dataset.py    # Build COCO dataset from raw reports
-│   ├── cleanup_dataset.py       # Normalize/merge categories
+│   ├── build_coco_dataset.py    # Build COCO dataset from raw reports (includes normalization)
 │   ├── coco_to_yolo.py         # Convert COCO → YOLO format
 │   └── visualize_dataset.py     # Visualize annotations
 ├── dataset/
