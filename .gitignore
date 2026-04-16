@@ -1,6 +1,7 @@
 # Data directories
 dataset/
 巡检报告/
+巡检报告
 
 # Python
 __pycache__/
