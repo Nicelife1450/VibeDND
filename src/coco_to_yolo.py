@@ -5,6 +5,7 @@ COCO 格式转换为 YOLO 格式
 功能：将 COCO annotations.json 转换为 YOLO 格式，支持训练/验证划分
 """
 
+import argparse
 import json
 import os
 import random
@@ -30,15 +31,38 @@ def coco_to_yolo_bbox(bbox, img_width, img_height):
     return x_center, y_center, width, height
 
 
+def find_image_source(file_name, search_dirs):
+    """在多个候选目录中查找图像文件"""
+    for d in search_dirs:
+        p = d / file_name
+        if p.exists():
+            return p.resolve()
+    return None
+
+
 def main():
+    parser = argparse.ArgumentParser(description='COCO 格式转换为 YOLO 格式')
+    parser.add_argument('--annotations', type=str, default='dataset/annotations.json',
+                        help='COCO annotations JSON 文件路径')
+    parser.add_argument('--output', type=str, default='dataset/yolo',
+                        help='YOLO 输出目录')
+    args = parser.parse_args()
+
     random.seed(42)
 
     # 路径配置
-    base_dir = Path('dataset')
+    coco_ann_file = Path(args.annotations)
+    base_dir = coco_ann_file.parent
     images_dir = base_dir / 'images'
-    coco_ann_file = base_dir / 'annotations.json'
 
-    output_dir = base_dir / 'yolo'
+    # 支持的图像搜索目录（按优先级）
+    search_dirs = [
+        images_dir,
+        base_dir / 'augmented_images',
+        base_dir / 'augmented_rare',
+    ]
+
+    output_dir = Path(args.output)
     output_images_train = output_dir / 'images' / 'train'
     output_images_val = output_dir / 'images' / 'val'
     output_labels_train = output_dir / 'labels' / 'train'
@@ -138,7 +162,7 @@ def main():
     print(f"Val images: {len(val_images)}")
 
     # 创建软链和标签文件
-    def process_images(images, labels_dir, images_output_dir, images_input_dir):
+    def process_images(images, labels_dir, images_output_dir):
         count = 0
         for img_info in images:
             img_id = img_info['id']
@@ -146,11 +170,15 @@ def main():
             img_width = img_info['width']
             img_height = img_info['height']
 
-            # 创建软链
-            src = images_input_dir / file_name
+            # 在多个候选目录中查找源图像
+            src = find_image_source(file_name, search_dirs)
+            if src is None:
+                print(f"Warning: image not found: {file_name}")
+                continue
+
             dst = images_output_dir / file_name
             if not dst.exists():
-                os.symlink(src.resolve(), dst)
+                os.symlink(src, dst)
 
             # 创建标签文件
             label_file = labels_dir / f"{Path(file_name).stem}.txt"
@@ -182,11 +210,11 @@ def main():
         return count
 
     print("\nProcessing training set...")
-    train_count = process_images(train_images, output_labels_train, output_images_train, images_dir)
+    train_count = process_images(train_images, output_labels_train, output_images_train)
     print(f"Training labels created: {train_count}")
 
     print("\nProcessing validation set...")
-    val_count = process_images(val_images, output_labels_val, output_images_val, images_dir)
+    val_count = process_images(val_images, output_labels_val, output_images_val)
     print(f"Validation labels created: {val_count}")
 
     # 创建 dataset.yaml

@@ -21,9 +21,29 @@ The script scans `巡检报告/` directories, detects red circle annotations via
 
 ### Convert COCO to YOLO format
 ```bash
-python3 src/coco_to_yolo.py
+python3 src/coco_to_yolo.py [--annotations dataset/annotations_merged.json] [--output dataset/yolo]
 ```
-Converts COCO annotations to YOLO format with train/val split (8:2). Merges categories with < 10 annotations into "其他缺陷".
+Converts COCO annotations to YOLO format with train/val split (8:2). Merges categories with < 10 annotations into "其他缺陷". Accepts any COCO JSON via `--annotations` (defaults to `dataset/annotations.json`); image files are resolved by searching `images/`, `augmented_images/`, `augmented_rare/` in that order.
+
+### Offline augmentation for rare categories
+```bash
+# Geometric/photometric augmentation (3 variants per rare image, written into dataset/images/)
+python3 src/offline_rare_augmentation.py --rare-threshold 50 --variants 3
+
+# Copy-paste rare-category patches onto background images (output: dataset/augmented_images/)
+python3 src/copy_paste_augmentation.py --rare-threshold 50 --target-per-category 200
+```
+Both target categories with < `rare-threshold` annotations and output a new COCO JSON (original + added entries), seeded with 42. Feed the result back through `coco_to_yolo.py --annotations <output.json>` to build an augmented YOLO dataset.
+
+### Pseudo-labeling (semi-supervised)
+```bash
+# 1. Teacher model labels unannotated images found in 巡检报告/缺陷原图/
+python3 src/generate_pseudolabels.py --model runs/detect/train/weights/best.pt --conf 0.6
+
+# 2. Merge pseudo labels with ground truth
+python3 src/merge_pseudolabels.py
+```
+Pseudo labels map YOLO class indices back to COCO category IDs via class-name matching. Pseudo images are copied to `dataset/pseudo_images/` — note this dir is NOT searched by `coco_to_yolo.py` by default.
 
 ### Visualize annotations
 ```bash
@@ -35,14 +55,21 @@ Options: `--dataset` (default `dataset/annotations.json`), `--output` (default `
 
 ```
 src/
-├── build_coco_dataset.py   # Dataset builder - scans 巡检报告, detects red circles, outputs clean COCO format
-├── coco_to_yolo.py         # COCO → YOLO format converter with train/val split
+├── build_coco_dataset.py        # Dataset builder - scans 巡检报告, detects red circles, outputs clean COCO format
+├── coco_to_yolo.py              # COCO → YOLO converter with train/val split (--annotations/--output args)
+├── offline_rare_augmentation.py # Geometric/photometric augmentation of images containing rare categories
+├── copy_paste_augmentation.py   # Copy-paste rare-category patches onto backgrounds (IoU-checked placement)
+├── generate_pseudolabels.py     # Teacher-model inference over unannotated 巡检报告 images → pseudo COCO
+├── merge_pseudolabels.py        # Merge pseudo COCO into ground-truth COCO (re-indexes IDs)
 └── visualize_dataset.py   # Annotation visualizer - draws bounding boxes on images
 
 dataset/
 ├── annotations.json        # COCO format: images, annotations, categories (72 categories)
 ├── defect_severity.json    # defect_type → severity mapping (一般/严重/危急缺陷)
-├── images/                 # Renamed images (DND_xxxxxxxx.jpg)
+├── images/                 # Renamed images (DND_xxxxxxxx.jpg) + AUG_RARE_* offline augmentations
+├── augmented_images/       # AUG_CP_* copy-paste augmentations (created on demand)
+├── pseudo_images/          # PSEUDO_* copies of teacher-labeled images (created on demand)
+├── annotations_*.json      # Augmented/merged COCO variants (copypaste, augmented_rare, merged, pseudo)
 └── yolo/                   # YOLO format dataset (51 categories after merging)
     ├── dataset.yaml         # YOLO training config
     ├── images/
@@ -59,7 +86,9 @@ dataset/
         └── 缺陷圈图/         # Annotated images with red circles
 ```
 
-**Dataset builder flow**: Scan inspection folders → match annotated image to original → parse filename for defect metadata → detect red circles via HSV → output COCO format with renamed images.
+**Dataset builder flow**: Scan inspection folders → match annotated image to original → parse defect metadata from filename → detect red circles via HSV → output COCO format with renamed images.
+
+**Training-data pipeline**: start from `annotations.json` → optionally run rare-category augmentation and/or pseudo-label merging to produce a new COCO JSON → `coco_to_yolo.py --annotations <json>` → train YOLO. Augmentation scripts append entries (IDs continue from `max(id) + 1`, seed 42) rather than modifying the input; new images are named `AUG_RARE_*`, `AUG_CP_*`, `PSEUDO_*`.
 
 **Annotation format**: Bounding boxes detected via HSV red color detection on annotated images, not from original filenames.
 
@@ -111,24 +140,4 @@ yolo detect predict model=runs/detect/train/weights/best.pt source=dataset/image
 
 ```bash
 rsync -avz --exclude='dataset/images' --exclude='venv' --exclude='.git' --exclude='__pycache__' --exclude='*.pyc' --exclude='runs' -e "ssh -p 1172" ./ mac247:/home/huyue/huyue-project/VibeDND
-```
-
-## Project Structure
-
-```
-VibeDND/
-├── src/
-│   ├── build_coco_dataset.py    # Build COCO dataset from raw reports (includes normalization)
-│   ├── coco_to_yolo.py         # Convert COCO → YOLO format
-│   └── visualize_dataset.py     # Visualize annotations
-├── dataset/
-│   ├── annotations.json         # COCO format (72 categories)
-│   ├── defect_severity.json    # Severity mapping
-│   ├── images/                 # Original images (DND_xxxxxxxx.jpg)
-│   └── yolo/                   # YOLO format (51 categories after merging)
-│       ├── dataset.yaml
-│       ├── images/train, val   # Symlinks
-│       └── labels/train, val   # .txt files
-├── venv/                       # Python virtual environment
-└── CLAUDE.md                   # This file
 ```
