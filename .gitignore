@@ -48,3 +48,7 @@ Thumbs.db
 runs/*
 *.pt
 
+
+# experiments: 大日志与可再生推理图不入库
+experiments/*.log
+experiments/insplad_crossdomain/

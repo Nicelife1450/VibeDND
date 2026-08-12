@@ -73,6 +73,8 @@ def find_valid_paste_location(bg_shape, patch_shape, existing_bboxes, max_tries=
     ph, pw = patch_shape[:2]
     margin_x = int(bw * 0.05)
     margin_y = int(bh * 0.05)
+    if pw > bw - 2 * margin_x or ph > bh - 2 * margin_y:
+        return None, None
 
     for _ in range(max_tries):
         cx = random.randint(margin_x + pw // 2, bw - margin_x - pw // 2)
@@ -90,6 +92,8 @@ def main():
     parser.add_argument('--rare-threshold', type=int, default=50)
     parser.add_argument('--target-per-category', type=int, default=200)
     parser.add_argument('--output', type=str, default='dataset/annotations_copypaste.json')
+    parser.add_argument('--split', type=str, default=None,
+                        help='划分 JSON; 提供后 patch 来源与背景都只用 train 图像(防 val 泄漏)')
     args = parser.parse_args()
 
     random.seed(42)
@@ -103,7 +107,14 @@ def main():
     with open(ann_path, 'r', encoding='utf-8') as f:
         coco = json.load(f)
 
-    cat_counts = Counter(a['category_id'] for a in coco['annotations'])
+    train_only = None
+    if args.split:
+        with open(args.split, 'r', encoding='utf-8') as f:
+            train_only = set(json.load(f)['train'])
+        print(f'划分约束: patch/背景仅来自 {len(train_only)} 张 train 图像')
+
+    cat_counts = Counter(a['category_id'] for a in coco['annotations']
+                         if train_only is None or a['image_id'] in train_only)
     rare_cat_ids = {cid for cid, c in cat_counts.items() if c < args.rare_threshold}
 
     print(f"发现 {len(rare_cat_ids)} 个稀有类别 (<{args.rare_threshold} 标注)")
@@ -119,6 +130,8 @@ def main():
     patches = defaultdict(list)  # cat_id -> list of (patch_img, orig_bbox)
     for cid in rare_cat_ids:
         for ann in cat_to_anns.get(cid, []):
+            if train_only is not None and ann['image_id'] not in train_only:
+                continue
             img_info = img_id_to_info[ann['image_id']]
             img_path = img_dir / img_info['file_name']
             img = cv2.imread(str(img_path))
@@ -129,7 +142,8 @@ def main():
                 patches[cid].append((patch, ann['bbox']))
 
     # 背景图像池：优先选择标注较少的图像
-    bg_images = list(coco['images'])
+    bg_images = [img for img in coco['images']
+                 if train_only is None or img['id'] in train_only]
 
     next_img_id = max(img['id'] for img in coco['images']) + 1
     next_ann_id = max(a['id'] for a in coco['annotations']) + 1
@@ -158,6 +172,15 @@ def main():
 
             # 颜色抖动
             patch_img_jittered = color_jitter_patch(patch_img.copy())
+
+            # 松散 ROI patch 可能过大, 先缩到背景的 60% 以内
+            bh, bw = bg.shape[:2]
+            ph, pw = patch_img_jittered.shape[:2]
+            fit = min(1.0, 0.6 * bw / pw, 0.6 * bh / ph)
+            if fit < 1.0:
+                patch_img_jittered = cv2.resize(
+                    patch_img_jittered, (int(pw * fit), int(ph * fit)),
+                    interpolation=cv2.INTER_AREA)
 
             ph, pw = patch_img_jittered.shape[:2]
             cx, cy = find_valid_paste_location(bg.shape, (ph, pw), existing_bboxes)
