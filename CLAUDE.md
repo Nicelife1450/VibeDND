@@ -12,7 +12,8 @@ VibeDND is a COCO-format dataset for **配网无人机巡检缺陷检测** (powe
 
 核心决策:
 - **自有标注已全部废弃**(2026-08-12 用户确认, 含验收 GT; 移至 `experiments/archive/annotations/`); 验收协议待重定义(见路线文档)
-- 新 pipeline: 公开数据集预训练(InsPLAD/EPRI/UPID/IDID) → 部件检测器 + 状态分类器级联(部件状态型 11 类) + 直接检测分支(场景异物型 5 类)
+- **输电侧外部数据全部废弃**(2026-08-12 用户确认): InsPLAD/Tomaszewski/CPLID/ID-2024 已删; 仅剩 ICARUS(配电杆顶) + EPRI 标签(无图); 公开世界无"配网+缺陷"数据
+- pipeline: 部件检测器 + 状态分类器级联(部件状态型 11 类) + 直接检测分支(场景异物型 5 类); 缺陷监督来源待重设计
 - 参考调研: `docs/配电网缺陷检测开源数据集调研.md`, `docs/reference.pdf` (Energies 2026 综述)
 
 ## 历史结论(2026-07, R1-R7 实验)
@@ -36,9 +37,9 @@ python3 src/build_yolo_from_split.py --train-annotations <json> --val-annotation
   --split <split.json> --train-split-ids --output <dir>                   # 按指定划分构建
 ```
 
-### InsPLAD (external pretraining dataset)
+### 部件检测数据集 (EPRI → 5 类)
 ```bash
-python3 src/insplad_to_yolo.py   # dataset/external/insplad/det → dataset/yolo_insplad/ (自带官方 train/val)
+python3 src/build_component_dataset.py   # EPRI 3 线路多边形→紧框 → dataset/yolo_component/
 ```
 
 ### Visualize annotations
@@ -52,18 +53,19 @@ python3 src/visualize_dataset.py --num 10
 src/
 ├── coco_to_yolo.py           # COCO → YOLO 通用转换
 ├── build_yolo_from_split.py  # 按指定 split JSON 构建 YOLO 数据集(symlink)
-├── insplad_to_yolo.py        # InsPLAD-det COCO → YOLO
+├── build_component_dataset.py # EPRI+ICARUS → 6 类配网部件检测集
 ├── sliced_eval.py            # SAHI 式切片推理验收(高分辨率评估工具)
 └── visualize_dataset.py      # 标注可视化
 
-(旧管线脚本 build_coco_dataset / build_reduced_dataset / clean_red_circles 已归档至 experiments/archive/scripts/)
+(insplad_to_yolo.py / build_pretrain_det.py 等已归档至 experiments/archive/scripts/)
 
 dataset/
 ├── defect_severity.json      # 缺陷严重度映射
 ├── images/                   # 清洗后原图 DND_xxxxxxxx.jpg (38G)
 ├── images_contaminated_backup/  # 清洗前备份 (18G)
-├── external/insplad/         # InsPLAD 原始包 + det/ 解压 (15G)
-└── yolo_insplad/             # InsPLAD YOLO 格式(官方 train/val)
+├── external/
+│   └── epri/                 # EPRI 配电: 标签 CSV + 8 线路图像 5,678 张 (38G, 唯一外部料)
+└── yolo_component/           # ★ 部件检测集: 5,678 张 / 25k 实例 / 5 类(EPRI-only)
 
 experiments/
 ├── log.md, final_report.md   # R1-R8 实验日志与终版报告
@@ -71,13 +73,14 @@ experiments/
 
 docs/
 ├── 两阶段路线.md              # ★ 当前任务路线权威文档
+├── 探索实验全记录.md          # 四阶段演进: 原标注→弱监督→开源迁移→Agent重标
 ├── 配电网缺陷检测开源数据集调研.md
 └── reference.pdf             # Energies 2026 电力巡检公开数据集综述
 ```
 
 ## Key Patterns
 
-- Image dimensions: 4000x3000; images cleaned of red-circle contamination (Telea inpaint, ring-only filtering)
+- Image dimensions(2026-08-13 实测): 主力 4864×3648(1718) + 4000×3000(1104) + 8000×6000(257) + 5472×3648(182) + 4056×3040(163); 另有 ~200 张报告缩略小图(~1200×800); images cleaned of red-circle contamination (Telea inpaint, ring-only filtering)
 - HSV red detection: ranges `([0,100,100],[10,255,255])` and `([160,100,100],[180,255,255])`
 - ultralytics 的 `device=` 参数会覆盖 `CUDA_VISIBLE_DEVICES`, 直接用 `device=N` 即可
 - ultralytics SAM 框提示需显式 `conf=0.01`(mask 分数低于默认 0.25 会被静默丢弃)
